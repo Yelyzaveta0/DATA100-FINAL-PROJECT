@@ -1,0 +1,290 @@
+---
+title: "Sample Project"
+---
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(ggridges)
+theme_set(theme_bw())
+knitr::opts_chunk$set(echo = FALSE) # Prevents code from showing in the pdf.
+
+# Downloaded from https://survey.stackoverflow.co/
+so <- read_csv("survey_results_public.csv", show_col_types = FALSE)
+
+head(so)
+
+so |> count(MainBranch)
+so |> count(DevType) |> arrange(-n) |> print(n = Inf)
+so |>
+    filter(str_detect(LanguageHaveWorkedWith, "R|Python|Julia|SQL")) |>
+    count(LanguageHaveWorkedWith, sort = TRUE) |>
+    print(n = 50)
+```
+
+# Introduction
+
+<<I'll use double angle brackets to point out what I'm doing at each point.>>
+
+<<Here, I'm describing the data in general. I want to give the reader enough information to ask the same questions as me, without actually stating my research goals.>>
+
+StackOverflow is the go-to location for developers, data scientists, and students trying to solve coding issues that they are facing. Each year, they survey their users to get an idea of the demographics. In this survey, they include their job, education level, and their income, along with how they learned to code.
+
+# Goals
+
+In this work, I'll look at how education level affects income. I'm restricting my analysis to people who code in R or python who work in a data-related field.
+
+# Basic Data Cleaning
+
+<<The wording describes exactly what happens in the code so that someone could create the same code as me without seeing it.>>
+
+```{r}
+# This would *definitely* count as Option 1: Advanced Data Cleaning.
+so_work <- so |>
+    select(
+        YearsCode, Currency, CompTotal, DevType,
+        LanguageHaveWorkedWith, EdLevel, WorkExp, Age,
+    ) |>
+    # Only data-related and academia-related devtypes
+    # Note that spaces are meaningful!
+    filter(str_detect(tolower(DevType), "(data | ai|researcher|student)")) |>
+    mutate(
+        DevClass = case_when(
+            str_detect(tolower(DevType), "(data | ai)") ~ "Data Science",
+            str_detect(tolower(DevType), "(researcher)") ~ "Academic",
+            str_detect(tolower(DevType), "(student)") ~ "Student",
+        )
+    ) |>
+    # Only people who have worked with R, python or Julia
+    filter(str_detect(LanguageHaveWorkedWith, "R|Python|Julia|SQL")) |>
+    # Split the Education Level at all spaces, then take the first word
+    mutate(
+        EdLevel = str_split_i(EdLevel, pattern = " ", i = 1)
+    ) |>
+    # Fix some cases where the first word of EdLevel is not informative
+    mutate(
+        EdLevel = case_when(
+            EdLevel == "Some" ~ "Some College/University",
+            EdLevel == "Something" ~ "Other",
+            .default = EdLevel
+        )
+    ) |>
+    # The first three letters of `Currency` are the country code
+    mutate(Currency = str_sub(Currency, 1, 3)) |>
+    # If Work Experience is NA *and* they're a student, set WorkExp to 0 years
+    mutate(
+        WorkExp = if_else(is.na(WorkExp) & DevType == "Student", 0, WorkExp)
+    ) |>
+    # YearsCode has two character values
+    mutate(YearsCode = parse_number(YearsCode))
+
+so_work |> count(Currency) |> arrange(-n)
+
+# Downloaded from:
+# https://www.bankofcanada.ca/rates/exchange/daily-exchange-rates/
+# Exchange rates start on line 40 of the file
+exchange <- read_csv("FX_RATES_DAILY-sd-2017-01-03.csv", skip = 39,
+    show_col_types = FALSE)
+
+exchange_join <- exchange |>
+    # Data starts with a column called date, then a column for each country.
+    # Column names have the format FX---CAD, where the --- is the country code
+    pivot_longer(
+        -date, names_prefix = "FX",
+        names_to = "Currency", values_to = "Rate"
+    ) |>
+    mutate(Currency = str_remove(Currency, "CAD")) |>
+    # Group by and filter to only use the most recent exchange rate
+    group_by(Currency) |>
+    filter(date == max(date)) |>
+    ungroup() |>
+    # Date column is extraneous
+    select(-date)
+
+so_cad <- left_join(so_work, exchange_join, by = join_by(Currency)) |>
+    mutate(CompCAD = CompTotal * Rate) |>
+    # No longer needed now that we have CAD
+    select(-Rate, -Currency, -CompTotal) |>
+    # No NAs are meaningful anymore
+    # (WorkExp was originally meaningful - students had NA for WorkExp)
+    na.omit() |>
+    mutate(
+        r = str_detect(LanguageHaveWorkedWith, "R"),
+        python = str_detect(LanguageHaveWorkedWith, "Python"),
+        julia = str_detect(LanguageHaveWorkedWith, "Julia"),
+        sql = str_detect(LanguageHaveWorkedWith, "SQL")
+    ) |>
+    select(-LanguageHaveWorkedWith) |>
+    mutate(
+        Langs = str_c(
+            if_else(r, "R", ""),
+            if_else(python, "Python", ""),
+            if_else(julia, "Julia", ""),
+            if_else(sql, "SQL", ""),
+            sep = "_"
+        )
+    )
+
+so_cad
+```
+
+
+# Exploratory Plots
+
+<<I give three plots just to give your more examples of the plots you might want to make.>>
+
+## Plot 1: Which languages do people know?
+
+```{r}
+so_cad |>
+    ggplot() +
+    aes(x = fct_infreq(Langs), fill = Langs) +
+    theme(legend.position = "none") +
+    geom_bar() +
+    coord_flip() +
+    # scales = "free_x" makes it so the x-axis is different for diff facets.
+    facet_wrap(~ DevClass, scales = "free_x")
+```
+
+- Not many people know Julia, and those who do appear to be researchers.
+- Most people in this sample (which is specifically data-related jobs) know python, rather than R.
+-  Data Scientists that know R tend to also know Python and SQL.
+
+
+## Plot 2: Work/Code Experience
+
+```{r}
+so_cad |>
+    filter(DevType != "Student", Age != "Prefer not to say") |>
+    ggplot() +
+    aes(y = WorkExp, x = YearsCode) +
+    geom_point() +
+    geom_abline(intercept = 0, slope = 1, colour = "red") +
+    facet_wrap(~ Age) +
+    labs(
+        x = "Years of Coding Experience",
+        y = "Years of Work Experience",
+        title = "Working and Coding Experience, by Age Group",
+        subtitle = "People above the red line have been working longer than they've been coding."
+    )
+
+```
+
+- Older people are more likely to have had to learn to code *after* they started working. Younger people have learned to code before they entered the workforce.
+- Regardless of age group, the slope of the points appears to be 1 - people have been coding at the same rate as they've been working, regardless of when they started either.
+- Those 65 year-olds have been coding for a long time!!!
+    - This probably says something about the data collection! The data only includes programmers/data scientists, so there's a bias as to who we're looking at.
+
+## Plot 3: Experience and Language
+
+```{r}
+so_cad |>
+    filter(!Age %in% c("Prefer not to say", "Under 18 years old")) |>
+    select(Age, CompCAD, YearsCode, r, python, julia, sql) |>
+    pivot_longer(-c(Age, CompCAD, YearsCode)) |>
+    filter(value) |>
+    select(-value) |>
+    ggplot() +
+    aes(x = YearsCode, y = name, fill = name) +
+    geom_density_ridges(bandwidth = 1.5, alpha = 0.75, rel_min_height = 0.05) +
+    facet_wrap(~ Age)
+```
+
+- Most people who learned Julia have already been programming for a long time; in other words, people only learn Julia once they're comfortable with other languages.
+- 65 year-olds only know Python.
+- Distribution for R and Python are similar - looks like people are learning them at similar rates!
+    - Due to the nature of pivoting, the "R" and the "Python" plots will include many of the same people.
+
+
+# Model Plots
+
+<<I give three plots just to give your more examples of the plots you might want to make.>>
+
+## Model Plot 1: Wage and Coding Experience
+
+```{r}
+so_cad |>
+    select(CompCAD, YearsCode, r, python, julia, sql) |>
+    pivot_longer(-c(CompCAD, YearsCode)) |>
+    filter(value) |>
+    select(-value) |>
+    ggplot() +
+    aes(x = YearsCode, y = CompCAD, colour = name) +
+    geom_point() +
+    geom_smooth(se = FALSE, formula = y ~ x, method = "lm") +
+    facet_wrap(~ name)
+```
+
+In the plot above, note that *many* of the points are the same across facets. The people in the "python" plot very likely know another language.
+
+- Regardless of which language you learn, more experience seems to increase your pay.
+
+## Model Plot 2: Wage and Language (LangWage?)
+
+```{r}
+
+colour_by_language <- function(language) {
+    ggplot(filter(so_cad, CompCAD < 500000)) +
+        aes(y = CompCAD, x = Langs, fill = {{ language }}) +
+        geom_boxplot() +
+        coord_flip() +
+        scale_fill_manual(
+            values = c("red", "green")
+        ) +
+        labs(
+            x = "Compensation (Canadian Dollars)",
+            y = NULL,
+            title = substitute(language),
+            fill = "Language Present?"
+        )
+}
+
+gg_r <- colour_by_language(r)
+gg_p <- colour_by_language(python)
+gg_s <- colour_by_language(sql)
+gg_j <- colour_by_language(julia)
+
+gg_r + gg_p + gg_s + gg_j +
+    plot_layout(nrow = 1, axes = "collect", guides = "collect") +
+    plot_annotation(title = "Which Languages Have Higher Pay?",
+        subtitle = "All sets of plots are the exact same except for colour") &
+    theme(legend.position = "bottom")
+```
+
+- More languages appears to be associated with more pay.
+    - Especially if that language is SQL, it would seem.
+        - Note that SQL alone doesn't get you a high salary.
+    - Adding Julia also seems to increase pay, but this is likely not causal. Perhaps those who need to learn Julia are in a better job already, rather than learning Julia and then getting a better job.
+    - Python+SQL and R+SQL seem to be the best bang for your buck - with just two languages, you get almost the full benefit of Python+R+SQL+Julia
+
+## Model Plot 3: Wage, Age, and Educage
+
+```{r}
+so_cad |>
+    filter(!Age %in% c("Prefer not to say", "Under 18 years old")) |>
+    filter(CompCAD < 500000) |>
+    mutate(
+        EdLevel = fct_relevel(
+            EdLevel,
+            c("Secondary", "Some College/University", "Bachelor’s",
+                "Master’s", "Associate", "Professional", "Other")
+        )
+    ) |>
+    ggplot() +
+    aes(x = EdLevel, y = CompCAD, fill = Age) +
+    geom_violin(scale = "count") + # Widths proportional to amount of data
+    facet_wrap(~ Age) +
+    coord_flip()
+```
+
+- For people 35-44 or 45-54 years old, a Master's means they make *less* money!?!
+    - Maybe the master's degree was in a different field than data science?
+- Professional Degrees appear to help a lot!
+- Very few people (especially yhose older than 25) have only a Seconday School education. 
+- A surprising number of people in the 18-24 range have a Bachelor's degree.
+    - They may have answer "Bachelor's" even if they aren't yet completed?
+
+# Exploratory Modelling
+
+
+
