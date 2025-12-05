@@ -4,22 +4,18 @@ title: "Sample Project"
 
 ```{r}
 library(tidyverse)
+library(readr)
 library(patchwork)
 library(ggridges)
+library(janitor)
 theme_set(theme_bw())
 knitr::opts_chunk$set(echo = FALSE) # Prevents code from showing in the pdf.
 
 # Downloaded from https://survey.stackoverflow.co/
-so <- read_csv("survey_results_public.csv", show_col_types = FALSE)
+education_costs <- read_csv("C:/Users/Лиза/Desktop/DATA100 R/DATA100-FINAL-PROJECT/International_Education_Costs.csv", show_col_types = FALSE)
 
-head(so)
-
-so |> count(MainBranch)
-so |> count(DevType) |> arrange(-n) |> print(n = Inf)
-so |>
-    filter(str_detect(LanguageHaveWorkedWith, "R|Python|Julia|SQL")) |>
-    count(LanguageHaveWorkedWith, sort = TRUE) |>
-    print(n = 50)
+glimpse(education_costs) #remove later
+summary(education_costs)
 ```
 
 # Introduction
@@ -36,96 +32,50 @@ In this work, I'll look at how education level affects income. I'm restricting m
 
 # Basic Data Cleaning
 
-<<The wording describes exactly what happens in the code so that someone could create the same code as me without seeing it.>>
+At the first quick glance of the current data set movies, it is clear that it is not cleaned properly: follow description
+  
 
 ```{r}
 # This would *definitely* count as Option 1: Advanced Data Cleaning.
-so_work <- so |>
-    select(
-        YearsCode, Currency, CompTotal, DevType,
-        LanguageHaveWorkedWith, EdLevel, WorkExp, Age,
-    ) |>
-    # Only data-related and academia-related devtypes
-    # Note that spaces are meaningful!
-    filter(str_detect(tolower(DevType), "(data | ai|researcher|student)")) |>
-    mutate(
-        DevClass = case_when(
-            str_detect(tolower(DevType), "(data | ai)") ~ "Data Science",
-            str_detect(tolower(DevType), "(researcher)") ~ "Academic",
-            str_detect(tolower(DevType), "(student)") ~ "Student",
-        )
-    ) |>
-    # Only people who have worked with R, python or Julia
-    filter(str_detect(LanguageHaveWorkedWith, "R|Python|Julia|SQL")) |>
-    # Split the Education Level at all spaces, then take the first word
-    mutate(
-        EdLevel = str_split_i(EdLevel, pattern = " ", i = 1)
-    ) |>
-    # Fix some cases where the first word of EdLevel is not informative
-    mutate(
-        EdLevel = case_when(
-            EdLevel == "Some" ~ "Some College/University",
-            EdLevel == "Something" ~ "Other",
-            .default = EdLevel
-        )
-    ) |>
-    # The first three letters of `Currency` are the country code
-    mutate(Currency = str_sub(Currency, 1, 3)) |>
-    # If Work Experience is NA *and* they're a student, set WorkExp to 0 years
-    mutate(
-        WorkExp = if_else(is.na(WorkExp) & DevType == "Student", 0, WorkExp)
-    ) |>
-    # YearsCode has two character values
-    mutate(YearsCode = parse_number(YearsCode))
+education_cleaned <- education_costs |>
+  clean_names() |>
+  mutate(across(where(is.character), str_trim)) |>
+  mutate(
+    country    = factor(country),
+    city       = factor(city),
+    university = factor(university),
+    program    = factor(program),
+    level      = factor(level)
+  ) |>
+  mutate(
+    tuition_usd    = as.numeric(tuition_usd),
+    rent_usd       = as.numeric(rent_usd),
+    insurance_usd  = as.numeric(insurance_usd),
+    visa_fee_usd   = as.numeric(visa_fee_usd),
+    exchange_rate  = as.numeric(exchange_rate)
+  ) |>
+  mutate(
+    annual_rent        = rent_usd * 12,
+    total_annual_cost  = tuition_usd + annual_rent + insurance_usd + visa_fee_usd,
+    tuition_local      = tuition_usd / exchange_rate,
+    rent_local         = rent_usd / exchange_rate
+  ) |>
+  filter(
+    !is.na(tuition_usd),
+    !is.na(rent_usd),
+    !is.na(insurance_usd),
+    !is.na(visa_fee_usd)
+  )
 
-so_work |> count(Currency) |> arrange(-n)
+education_long <- education_cleaned |>
+  pivot_longer(
+    cols = c(tuition_usd, rent_usd, insurance_usd, visa_fee_usd),
+    names_to = "cost_type",
+    values_to = "cost_value"
+  )
 
-# Downloaded from:
-# https://www.bankofcanada.ca/rates/exchange/daily-exchange-rates/
-# Exchange rates start on line 40 of the file
-exchange <- read_csv("FX_RATES_DAILY-sd-2017-01-03.csv", skip = 39,
-    show_col_types = FALSE)
-
-exchange_join <- exchange |>
-    # Data starts with a column called date, then a column for each country.
-    # Column names have the format FX---CAD, where the --- is the country code
-    pivot_longer(
-        -date, names_prefix = "FX",
-        names_to = "Currency", values_to = "Rate"
-    ) |>
-    mutate(Currency = str_remove(Currency, "CAD")) |>
-    # Group by and filter to only use the most recent exchange rate
-    group_by(Currency) |>
-    filter(date == max(date)) |>
-    ungroup() |>
-    # Date column is extraneous
-    select(-date)
-
-so_cad <- left_join(so_work, exchange_join, by = join_by(Currency)) |>
-    mutate(CompCAD = CompTotal * Rate) |>
-    # No longer needed now that we have CAD
-    select(-Rate, -Currency, -CompTotal) |>
-    # No NAs are meaningful anymore
-    # (WorkExp was originally meaningful - students had NA for WorkExp)
-    na.omit() |>
-    mutate(
-        r = str_detect(LanguageHaveWorkedWith, "R"),
-        python = str_detect(LanguageHaveWorkedWith, "Python"),
-        julia = str_detect(LanguageHaveWorkedWith, "Julia"),
-        sql = str_detect(LanguageHaveWorkedWith, "SQL")
-    ) |>
-    select(-LanguageHaveWorkedWith) |>
-    mutate(
-        Langs = str_c(
-            if_else(r, "R", ""),
-            if_else(python, "Python", ""),
-            if_else(julia, "Julia", ""),
-            if_else(sql, "SQL", ""),
-            sep = "_"
-        )
-    )
-
-so_cad
+education_cleaned
+education_long
 ```
 
 
