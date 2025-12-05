@@ -1,5 +1,5 @@
 ---
-title: "Sample Project"
+title: "Tuition prediction modeling"
 ---
 
 ```{r}
@@ -32,33 +32,43 @@ In this work, I'll look at how education level affects income. I'm restricting m
 
 # Basic Data Cleaning
 
-At the first quick glance of the current data set movies, it is clear that it is not cleaned properly: follow description
+At the first quick glance, the current dataset seems to be usable, but not fully ready for modeling. Several cleaning steps are necessary to ensure that the data is tidy, consistent and suitable for analysis.
+
+First of all, we need to make sure that our variables have appropriate data types: quantitative should be numeric, qualitative should be factor. We selected these variables and mutate them into an appropriate data type.
+
+Second of all, Character columns sometimes contained unnecessary white space (leading or trailing spaces). All character variables were cleaned using str_trim() to ensure consistency when grouping or filtering.
+
+Third of all, the dataset was inspected for missing values. Rows with missing values in essential cost related variables (tuition, rent, insurance, visa fees) were removed, as they would prevent accurate modeling.
+
+Lastly, we created a couple of new variables to better support modeling and analysis: Annual rent (annual_rent), Total annual cost (total_annual_cost) and Local currency tuition with rent (was adjusted based on exchange currency) - these variables can improve predictive performance and provide more meaningful insights.
+
+For further analysis and visualization, we also reshaped cost related variables using pivot_longer(), resulting in cost_type and cost_value columns. It will be useful for comparing cost categories across countries or institutions.
   
 
 ```{r}
-# This would *definitely* count as Option 1: Advanced Data Cleaning.
+# Cleaning before modeling
 education_cleaned <- education_costs |>
   clean_names() |>
   mutate(across(where(is.character), str_trim)) |>
   mutate(
-    country    = factor(country),
-    city       = factor(city),
+    country = factor(country),
+    city  = factor(city),
     university = factor(university),
-    program    = factor(program),
-    level      = factor(level)
+    program = factor(program),
+    level = factor(level)
   ) |>
   mutate(
-    tuition_usd    = as.numeric(tuition_usd),
-    rent_usd       = as.numeric(rent_usd),
-    insurance_usd  = as.numeric(insurance_usd),
-    visa_fee_usd   = as.numeric(visa_fee_usd),
-    exchange_rate  = as.numeric(exchange_rate)
+    tuition_usd = as.numeric(tuition_usd),
+    rent_usd  = as.numeric(rent_usd),
+    insurance_usd = as.numeric(insurance_usd),
+    visa_fee_usd = as.numeric(visa_fee_usd),
+    exchange_rate = as.numeric(exchange_rate)
   ) |>
   mutate(
-    annual_rent        = rent_usd * 12,
-    total_annual_cost  = tuition_usd + annual_rent + insurance_usd + visa_fee_usd,
-    tuition_local      = tuition_usd / exchange_rate,
-    rent_local         = rent_usd / exchange_rate
+    annual_rent = rent_usd * 12,
+    total_annual_cost = tuition_usd + annual_rent + insurance_usd + visa_fee_usd,
+    tuition_local = tuition_usd / exchange_rate,
+    rent_local  = rent_usd / exchange_rate
   ) |>
   filter(
     !is.na(tuition_usd),
@@ -81,42 +91,41 @@ education_long
 
 # Exploratory Plots
 
-<<I give three plots just to give your more examples of the plots you might want to make.>>
+Visualization is an essential part of teh Exploratory Data Analysis. Here, we will explore how does the tuition vary and relate to other factors that could impact it, by using 3 plots.
 
-## Plot 1: Which languages do people know?
+## Plot 1: How does tuition relate to the living cost index?
 
 ```{r}
-so_cad |>
-    ggplot() +
-    aes(x = fct_infreq(Langs), fill = Langs) +
-    theme(legend.position = "none") +
-    geom_bar() +
-    coord_flip() +
-    # scales = "free_x" makes it so the x-axis is different for diff facets.
-    facet_wrap(~ DevClass, scales = "free_x")
+plot1 <- education_cleaned |> 
+  ggplot(aes(x = living_cost_index, y = tuition_usd)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Tuition vs Living Cost Index")
+plot1
+
 ```
 
-- Not many people know Julia, and those who do appear to be researchers.
-- Most people in this sample (which is specifically data-related jobs) know python, rather than R.
--  Data Scientists that know R tend to also know Python and SQL.
+- Countries with higher living costs generally appear to have higher tuition fees. This suggests that cost of living and tuition may be influenced by similar economic factors.
+
+- Although the trend is positive, the points are widely scattered around the trend line. Living cost index alone does not strongly predict tuition. There are likely other important variables influencing tuition
+
+- High tuition but moderate living costs, and Low tuition in countries with relatively high living costs.
+
+Here, we can conclude that this plot shows a large variation. Thus, adding other factors/predictors could improve explaining the differences in tuition.
 
 
 ## Plot 2: Work/Code Experience
 
 ```{r}
-so_cad |>
-    filter(DevType != "Student", Age != "Prefer not to say") |>
-    ggplot() +
-    aes(y = WorkExp, x = YearsCode) +
-    geom_point() +
-    geom_abline(intercept = 0, slope = 1, colour = "red") +
-    facet_wrap(~ Age) +
-    labs(
-        x = "Years of Coding Experience",
-        y = "Years of Work Experience",
-        title = "Working and Coding Experience, by Age Group",
-        subtitle = "People above the red line have been working longer than they've been coding."
-    )
+library(corrplot)
+
+numeric_df <- education_cleaned |> 
+  select(tuition_usd, living_cost_index, duration_years)
+
+corrplot(cor(numeric_df), method = "circle")
+
+
+
 
 ```
 
