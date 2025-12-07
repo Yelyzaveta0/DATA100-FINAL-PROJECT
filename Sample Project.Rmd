@@ -1,8 +1,11 @@
 ---
 title: "Tuition prediction modeling"
+output:
+  pdf_document:
+    latex_engine: xelatex
 ---
 
-```{r}
+```{r, warning=FALSE}
 library(tidyverse)
 library(readr)
 library(patchwork)
@@ -281,6 +284,26 @@ ggplot(train_data, aes(x = predicted, y = tuition_usd)) +
     title = "Predicted vs Actual Tuition (Final Model)",
     x = "Predicted Tuition (USD)",
     y = "Actual Tuition (USD)"
+  ) +
+  theme_minimal()
+
+
+```
+
+# Polynomial regression curve
+```{r}
+ggplot(train_data, aes(x = living_cost_index, y = tuition_usd)) +
+  geom_point(alpha = 0.4) +
+  stat_smooth(
+    method = "lm",
+    formula = y ~ poly(x, 5, raw = TRUE),
+    color = "red",
+    linewidth = 1.2
+  ) +
+  labs(
+    title = "Polynomial Regression Fit (Degree 5)",
+    x = "Living Cost Index",
+    y = "Tuition (USD)"
   ) +
   theme_minimal()
 
